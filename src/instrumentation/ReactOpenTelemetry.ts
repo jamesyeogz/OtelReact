@@ -23,7 +23,6 @@ export interface ReactOpenTelemetryHookConfig extends InstrumentationConfig {
 export class ReactOpenTelemetryHook extends InstrumentationBase<ReactOpenTelemetryHookConfig> {
     readonly version = "0.0.1";
     private _activeSpan: Span | undefined = undefined;
-    private _currentPageContext?: Context;
     private _httpInterceptorEnabled: boolean = false;
 
   constructor(config: ReactOpenTelemetryHookConfig = {}) {
@@ -46,6 +45,24 @@ export class ReactOpenTelemetryHook extends InstrumentationBase<ReactOpenTelemet
     // Disable the instrumentation
     this._diag.debug('ReactOpenTelemetryHook disabled');
   }
+
+  private _startParentSpan(
+    spanName: string,
+    parentSpan?: Span,
+    attributes?: Record<string, string | number | boolean>
+  ): Span | undefined {
+     
+    const span = this.tracer.startSpan(
+        spanName,
+        {
+            ...attributes
+        },
+        parentSpan ? trace.setSpan(context.active(), parentSpan) : undefined
+      );
+      this._activeSpan = span;
+      return span;
+  }
+
   private _startSpan(
     spanName: string,
     parentSpan?: Span,
@@ -59,9 +76,7 @@ export class ReactOpenTelemetryHook extends InstrumentationBase<ReactOpenTelemet
         },
         parentSpan ? trace.setSpan(context.active(), parentSpan) : undefined
       );
-      return span;
-    
-    return undefined;
+    return span;
   }
 
   private _endSpan(span: Span, success?: boolean, errorMessage?: string) {
@@ -79,20 +94,8 @@ export class ReactOpenTelemetryHook extends InstrumentationBase<ReactOpenTelemet
       }
     }
     this._activeSpan = undefined;
-    this._currentPageContext = undefined;
   }
 
-  /**
-   * Set a new active span (useful for page navigation)
-   */
-  public setActiveSpan(span: Span): void {
-    // End previous span if exists
-    this.resetSpan();
-    
-    this._activeSpan = span;
-    this._currentPageContext = trace.setSpan(context.active(), span);
-    this._diag.debug('New active span set');
-  }
 
   /**
    * Get the current active span
@@ -109,13 +112,16 @@ export class ReactOpenTelemetryHook extends InstrumentationBase<ReactOpenTelemet
     attributes?: Record<string, string | number | boolean>;
   }): Span | undefined {
     // Use saved active span as parent, fallback to context if not available
-    const parentSpan = this._activeSpan || trace.getSpan(context.active());
+    let parentSpan = this._activeSpan || trace.getSpan(context.active());
     
-    if (parentSpan) {
-      const span = this._startSpan(action, parentSpan, attributes);
-      return span;
+    if (!parentSpan) {
+      const span = this._startParentSpan(action, parentSpan, attributes);
+      this._activeSpan = span;
+      parentSpan = span;
     }
-    
+
+    const span = this._startSpan(action, parentSpan, attributes);
+    return span;
     this._diag.warn('No parent span available for RunTrace');
     return undefined;
   }
